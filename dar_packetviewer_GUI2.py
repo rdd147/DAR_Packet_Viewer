@@ -9,15 +9,8 @@ import os
 import tarfile
 import binascii
 import time
-import string
-from __builtin__ import sum
-from datetime import datetime
 from enum import Enum
-# import xml.etree.ElementTree as ET
 from lxml import etree
-
-global packetnum
-
 
 class packettype(Enum):
     XML = 1  # implemented, will need bigger feature set
@@ -49,6 +42,7 @@ class window(Frame):
     def __init__(self, parent):
         Frame.__init__(self, parent)
         self.parent = parent
+        #self.iconbitmap(default='iconLogo100.ico')
         self.initalize()
         return
 
@@ -90,6 +84,8 @@ class window(Frame):
         self.export = Button(self, text="Save Current Packet to File", state=DISABLED)
         self.export.grid(row=5, column=2)
         # self.export.pack(side=BOTTOM)
+        self.slider = Scale(self, label='Position (%)', orient=HORIZONTAL, state=DISABLED, length=500)
+        self.slider.grid(row=6, column=2)
 
     def setpreviousoffset(self, value):
         self.prevoffset = value
@@ -122,6 +118,30 @@ class window(Frame):
             return
         output.write(buf)
         output.close()
+
+    def slider_position_goto(self, file):
+        print self.slider.get()
+        position = self.slider.get()
+        if position == 0:
+            offset_to_goto = 0
+            print offset_to_goto
+        else:
+            offset_to_goto = int(os.fstat(file.fileno()).st_size *((self.slider.get()*.01)))-1
+            print offset_to_goto
+        if position == 100:
+            file.seek(offset_to_goto)
+            self.setpreviousoffset(None)
+            self.seekpacketsbackwards(file)
+        else:
+            file.seek(offset_to_goto)
+            EOFtest = file.read(1)
+            if not EOFtest:
+                return
+            else:
+                file.seek(offset_to_goto)
+            self.seekpacketforward(file)
+
+        return
 
     def goto_offset(self, file):
         offsetgoto = self.entry.get()
@@ -186,38 +206,45 @@ class window(Frame):
         mcastbyte1 = struct.unpack('!B', header[12:13])[0]
         if self.get_current_DSID_filter() != None:  # check for no filter case
             if str(DSID) != self.get_current_DSID_filter():
-                return False, DSID, DARtype
+                return False, 0xff, 0xff # ff's mean  we do not know what these values should be
         if DSID > 1000 or mcastbyte1 < 224 or mcastbyte1 > 239: #check to qualify more 'random' data as good, to ensure the random data does not randomly find a good packet
-            return False, DSID, DARtype
+            return False, 0xff, 0xff # ff's mean we do not know what these values should be
         file.seek(file.tell()-20)
         for x in range(0, 4):
             header = file.read(20)# read the 20 byte header
             if header == '':
+                file.seek(returnoffset)
                 return True, DSID, DARtype
             DARsync = struct.unpack('!B', header[0:1])[0]  # read 20 byte DAR header into own variables
             packetlength = struct.unpack('!H', header[2:4])[0]
             packetlength = packetlength * 4
             datalength = packetlength - 20
+            DSID = struct.unpack('!I', header[8:12])[0]
+            mcastbyte1 = struct.unpack('!B', header[12:13])[0]
+            if DSID > 1000 or mcastbyte1 < 224 or mcastbyte1 > 239:  # check to qualify more 'random' data as good, to ensure the random data does not randomly find a good packet
+                return False, 0xff, 0xff # ff's mean we do not know what these values should be
             # handle end of file case
             if DARsync != 0x35:
                 file.seek(returnoffset)
-                return False, DSID, DARtype
+                return False, 0xff, 0xff # ff's mean we do not know what these values should be
             print file.tell()
             file.seek(file.tell() + datalength)
         file.seek(returnoffset)
         return True, DSID, DARtype
 
     def seekpacketsbackwards(self, file):
+        chunksize = 1024  # set chunk of data to be read
         goback = self.getpreviousoffset()  # go back to beginning of packet
         if goback == 0: # beginning of file case
             return
+        if goback == None:
+            goback = os.fstat(file.fileno()).st_size - chunksize
         file.seek(goback)
         currentoffset = file.tell()
         startoffset = file.tell()
         goodsync = False
-        chunksize = 1024 #set chunk of data to be read
-        list_to_seek = list(range(file.tell(), 0, -chunksize))
-        print list_to_seek
+        #list_to_seek = list(range(file.tell(), 0, -chunksize))
+        #print list_to_seek
         if file.tell() - chunksize <= 0:
             file.seek(0)
         else:
@@ -235,85 +262,16 @@ class window(Frame):
                     file.seek(checkoffset)  # go to exact offset of area to check
                     goodsync, DSID, DARtype = self.testDARpacket(file, goodsync, checkoffset)  # call a test to check if the DAR packet is real
                     if goodsync == True and (DARtype != 0xf1 or file.tell() == 0):
-                        print 'YOU ARE THE MAN!!!'
                         print file.tell()
                         print checkoffset
                         self.nextpacket(file)
                         return
                     else:
-                        file.seek(start_point_for_offset)
-        #if pos > 0:
-            #file.read(file.tell())
-
-
-        '''while True:
-        #while range(0,1):
-            togobackwards = file.tell() - chunksize
-            if togobackwards < 0: #handle BOF case
-                togobackwards = 0
-            file.seek(togobackwards)
-            chunk = file.read(chunksize) # read chunk of data
-            #chunksize = currentoffset - file.tell()
-            currentoffset = file.tell() #update current file offset
-            if chunk == '': #check for EOF, abort function if found
-                return'''
-        #chunk = binascii.b2a_hex(chunk) #bring binary string over to hex string to be processed
-        #print chunk #debugging print
-        #for m in re.finditer('35', chunk):
-            #m += 1
-        '''found = [m.start() for m in re.finditer('35', chunk)]   #regular expression search hex string chunk for 35 string and return list of indexes of all occurences
-        found.sort(reverse=True)
-        for index in found: #loop over all indexes to check if it is the start of a packet
-            if index % 2 == 0:  #if the index is not an even number, it is not a real instance. The string search is nibble by nibble, but in DAR, the lowest unit is a byte
-                checkoffset = file.tell() - (len(chunk)/2) + (index/2)   #make file offset of exact instance, remembering to divide the index by 2, since it is addressed in nibbles, not bytes
-                file.seek(checkoffset)  #go to exact offset of area to check
-                goodsync, DSID, DARtype = self.testDARpacket(file, goodsync, checkoffset) #call a test to check if the DAR packet is real
-                if goodsync == True and (DARtype != 0xf1 or file.tell() == 0):
-                    print 'YOU ARE THE MAN!!!'
-                    print file.tell()
-                    print checkoffset
-                    self.nextpacket(file)
-                    return
-                else:
-                    advancde_back = file.tell() - (2*chunksize)
-                    if advancde_back < 0:
-                        file.seek(0)
-                    else:
-                        file.seek(advancde_back)
-        file.seek(currentoffset)
-        currentoffset = file.tell()
-        goodsync = False
-        file.seek(currentoffset - 2)
-        while True:
-            header = file.read(1)  # read the 20 byte header
-            test = file.tell()
-            DARsync = struct.unpack('!B', header[0:1])[0]
-            if DARsync == 0x35:
-                type = file.read(1)
-                DARtype = struct.unpack('!B', type[0:1])[0]
-                print 'offset is :' + str(file.tell())
-                returnoffset = file.tell() - 2
-                file.seek(file.tell() - 2)
-                goodsync, DSID = self.testDARpacket(file, goodsync, returnoffset)
-                if goodsync == True:
-                    if DARtype == 0xf1:
-                        file.seek(0)
-                        self.nextpacket(file)
-                        return
-                    else:
-                        if DSID == self.get_current_DSID_filter() or self.get_current_DSID_filter() == None:
-                            print 'The man'
-                            print 'offset is 2:' + str(file.tell())
+                        if DARtype == 0xf1 or file.tell() == 0:
+                            file.seek(0)
                             self.nextpacket(file)
                             return
-                        else:
-                            file.seek(file.tell() - 2)
-                else:
-                    file.seek(file.tell() - 2)
-            else:
-                test = file.tell()
-                file.seek(file.tell() - 2)
-                # print 'resync' '''
+                        file.seek(start_point_for_offset)
 
     def seekpacketforward(self, file):
         # need EOF test here
@@ -346,26 +304,6 @@ class window(Frame):
                         file.seek(currentoffset)
             file.seek(currentoffset)
             #print found
-            '''header = file.read(1)  # read the 20 byte header
-            if header == '':
-                return
-            test = file.tell()
-            DARsync = struct.unpack('!B', header[0:1])[0]
-            if DARsync == 0x35:
-                print 'offset is :' + str(file.tell())
-                returnoffset = file.tell() - 1
-                file.seek(file.tell() - 1)
-                goodsync, DSID = self.testDARpacket(file, goodsync, returnoffset)
-                if goodsync == True:
-                    if str(DSID) == self.get_current_DSID_filter() or self.get_current_DSID_filter() == None:
-                        print 'The man'
-                        print 'offset is 2:' + str(file.tell())
-                        self.nextpacket(file)
-                        return
-                    else:
-                        file.seek(file.tell() + 1)
-                else:
-                    file.seek(file.tell() + 1)'''
 
     def onOpen(self):
         ftypes = [('DARv3', '*.dr3'), ('All files', '*')]
@@ -381,10 +319,8 @@ class window(Frame):
 
     def readFile(self, filename):
         file = open(filename, 'rb')  # open file to view packets
-        # packetnum=1 #initalize variables
-        # self.setpreviousoffset( file.tell())
         current_DSID, packet_type, buf, allDSIDs = decode_header(file)
-        picks = Menu(self.dropdown)
+        picks = Menu(self.dropdown, tearoff=False)
         self.dropdown.config(menu=picks, state=NORMAL)
         self.set_current_DSID_filter(None)
         picks.add_command(label='All', command=lambda: self.set_current_DSID_filter(None))
@@ -400,8 +336,10 @@ class window(Frame):
         # self.entry.bind('<KeyPress>', self.keyPress)
         self.offset.config(state=NORMAL, command=lambda: self.goto_offset(file))
         self.export.config(state=NORMAL, command=lambda: self.exportcurrentpacket())
+        self.slider.config(state=NORMAL)
+        for multi_buttons in ['<ButtonRelease-1>','<ButtonRelease-2>','<ButtonRelease-3>']:
+            self.slider.bind(multi_buttons, lambda _: self.slider_position_goto(file))
         return buf, file
-        # draw_screen(rawheader)
 
     def onvalidate(self, d, i, P):
         hexchars = (
@@ -881,15 +819,6 @@ def decode_XML_packet(file, datalength):
     allDSIDs.sort(key=int)
     print allDSIDs
     print 'XML position: ' + str(file.tell())
-    # if memoryElem != None:
-    # print memoryElem.text  # element text
-    # print memoryElem.get('unit')  # attribute
-    # root = ET.fromstring(buf)
-    # blah = root.findall('DSID')
-    # print blah
-    # print buf
-    # draw_screen_XML(buf)
-    # print testtarball
     return buf, allDSIDs
 
 
@@ -962,9 +891,6 @@ def decode_PCM_packet(file, datalength):
             pad = file.read(padbytes)
             datalength = datalength - padbytes  # properly adjust data length
         rawPCMdata = ''.join(x.encode('hex') for x in PCM_data)
-        # print rawPCMdata
-        # test =
-        # draw_screen(rawPCMdata)
         print datalength
         segment_data = {'segment_count': segment_count, 'nanosecondstime': nanosecondstime, 'seglength': seglength,
                         'FPGA_sync_error': FPGA_sync_error, 'block_len_error': block_len_error,

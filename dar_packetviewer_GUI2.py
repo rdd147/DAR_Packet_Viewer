@@ -2,7 +2,6 @@
 
 from Tkinter import *
 import tkFileDialog
-# import Tkinter
 import sys
 import struct
 import re
@@ -10,20 +9,14 @@ import os
 import tarfile
 import binascii
 import time
-import string
-from __builtin__ import sum
-from datetime import datetime
 from enum import Enum
-import xml.etree.ElementTree as ET
-
-global packetnum
-
+from lxml import etree
 
 class packettype(Enum):
-    XML = 1     # implemented, will need bigger feature set
-    PCM = 2     # implemented
-    MNPCM = 3   # implemented
-    A429 = 4    # implemented
+    XML = 1  # implemented, will need bigger feature set
+    PCM = 2  # implemented
+    MNPCM = 3  # implemented
+    A429 = 4  # implemented
     MPEG2 = 5
     MPEG4 = 6
     H264 = 7
@@ -36,7 +29,7 @@ class packettype(Enum):
     Audio = 14
     A664 = 15
     HFCI = 16
-    MIL1553 = 17
+    MIL1553 = 17    #mid implementation
     CAN = 18
     ENETUDP = 19
     ENETTCP = 20
@@ -49,11 +42,13 @@ class window(Frame):
     def __init__(self, parent):
         Frame.__init__(self, parent)
         self.parent = parent
+        #self.iconbitmap(default='iconLogo100.ico')
         self.initalize()
         return
 
     def initalize(self):
         self.parent.title("DARv3 Packet Viewer")
+        # self.grid(row=0, column=0, columnspan=30)
         self.pack(fill=BOTH, expand=1)
         menubar = Menu(self.parent)
         self.parent.config(menu=menubar)
@@ -61,24 +56,38 @@ class window(Frame):
         file = fileMenu.add_command(label="Open", command=self.onOpen)
         file = fileMenu.add_command(label="Quit", command=self.quit)
         menubar.add_cascade(label="File", menu=fileMenu)
-        self.txt = Text(self, height=30, width=100)
+        self.txt = Text(self, height=60, width=200)
         self.scroll = Scrollbar(self)
-        self.scroll.pack(side=RIGHT, fill=Y)
+        self.scroll.grid(row=2, column=5, sticky=E + N + S)
         self.scroll.config(command=self.txt.yview)
         self.txt.config(yscrollcommand=self.scroll.set)
-        self.txt.pack(fill=BOTH, expand=1)
-        self.button2 = Button(self, text="Previous Packet", state=DISABLED) #define and place widgets as disabled, enable later on
-        self.button2.pack(side=LEFT)
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_columnconfigure(2, weight=1)
+        self.txt.grid(row=0, column=0, columnspan=6, rowspan=4, sticky=N + S + E + W)
+        # self.txt.pack(fill=BOTH, expand=1)
+        self.button2 = Button(self, text="Previous Packet",
+                              state=DISABLED)  # define and place widgets as disabled, enable later on
+        self.button2.grid(row=5, column=0, sticky=W)
+        # self.button2.pack(side=LEFT)
         self.button = Button(self, text="Next Packet", state=DISABLED)
-        self.button.pack(side=LEFT)
+        self.button.grid(row=5, column=1, sticky=W)
+        # self.button.pack(side=LEFT)
+        self.dropdown = Menubutton(self, text='DSID Filter', state=DISABLED)
+        self.dropdown.grid(row=6, column=0, sticky=W)
+        # self.dropdown.pack(side=BOTTOM , fill=Y)
         self.entry = Entry(self, width=20, state=DISABLED)
-        self.entry.pack(side=RIGHT, fill=Y)
+        self.entry.grid(row=5, column=5, sticky=E)
+        # self.entry.pack(side=RIGHT, fill=Y)
         self.offset = Button(self, text="Go To Offset (hex)", state=DISABLED)
-        self.offset.pack(side=RIGHT)
+        self.offset.grid(row=5, column=4)
+        # self.offset.pack(side=RIGHT)
         self.export = Button(self, text="Save Current Packet to File", state=DISABLED)
-        self.export.pack(side=BOTTOM)
+        self.export.grid(row=5, column=2)
+        # self.export.pack(side=BOTTOM)
+        self.slider = Scale(self, label='Position (%)', orient=HORIZONTAL, state=DISABLED, length=500)
+        self.slider.grid(row=6, column=2)
 
-    def setpreviousoffset(self,value):
+    def setpreviousoffset(self, value):
         self.prevoffset = value
 
     def getpreviousoffset(self):
@@ -90,6 +99,16 @@ class window(Frame):
     def returncurrentbuf(self):
         return self.currentbuf
 
+    def set_current_DSID_filter(self, DSID):
+        self.DSIDfilter = DSID
+        if DSID == None:
+            self.dropdown.configure(text='ALL')
+        else:
+            self.dropdown.configure(text=DSID)
+            # print self.DSIDfilter
+
+    def get_current_DSID_filter(self):
+        return self.DSIDfilter
 
     def exportcurrentpacket(self):
         buf = self.returncurrentbuf()
@@ -100,9 +119,33 @@ class window(Frame):
         output.write(buf)
         output.close()
 
+    def slider_position_goto(self, file):
+        print self.slider.get()
+        position = self.slider.get()
+        if position == 0:
+            offset_to_goto = 0
+            print offset_to_goto
+        else:
+            offset_to_goto = int(os.fstat(file.fileno()).st_size *((self.slider.get()*.01)))-1
+            print offset_to_goto
+        if position == 100:
+            file.seek(offset_to_goto)
+            self.setpreviousoffset(None)
+            self.seekpacketsbackwards(file)
+        else:
+            file.seek(offset_to_goto)
+            EOFtest = file.read(1)
+            if not EOFtest:
+                return
+            else:
+                file.seek(offset_to_goto)
+            self.seekpacketforward(file)
+
+        return
+
     def goto_offset(self, file):
         offsetgoto = self.entry.get()
-        nonhex = int(offsetgoto,16) #HEX input
+        nonhex = int(offsetgoto, 16)  # HEX input
         file.seek(nonhex)
         EOFtest = file.read(1)
         if not EOFtest:
@@ -112,88 +155,155 @@ class window(Frame):
         self.seekpacketforward(file)
 
     def nextpacket(self, file):
-        self.txt.delete(1.0,END)
+        self.txt.delete(1.0, END)
         test = file.tell()
         self.setpreviousoffset(file.tell())
-        rawheader, packet_type, text = decode_header(file)
+        packet_DSID, packet_type, text, allDSIDs = decode_header(file)
+        print self.get_current_DSID_filter()
+        if self.get_current_DSID_filter() != None and (str(packet_DSID) != self.get_current_DSID_filter()): # check for no filter case
+            print self.get_current_DSID_filter()
+            filtermatch = False
+            while not filtermatch:
+                filtermatch = self.DSIDcheck(file)
+                if file.tell() == os.fstat(file.fileno()).st_size:
+                    return
+            packet_DSID, packet_type, text, allDSIDs = decode_header(file)
         self.txt.insert(END, text)
         self.setcurrentbuf(text)
         print "click!"
 
+    def DSIDcheck(self, file):
+        returnoffset = file.tell()
+        header = file.read(20)  # read the 20 byte header
+        DARtype = struct.unpack('!B', header[1:2])[0]
+        packetlength = struct.unpack('!H', header[2:4])[0]
+        packetlength = packetlength * 4
+        datalength = packetlength - 20
+        DSID = struct.unpack('!I', header[8:12])[0]
+        if str(DSID) == self.get_current_DSID_filter():
+            file.seek(returnoffset)
+            return True
+        else:
+            file.seek(file.tell() + datalength)
+            return False
+
     def previouspacket(self, file, previouspointer):
         self.txt.delete(1.0, END)
         file.seek(previouspointer)
-        rawheader, packet_type, text = decode_header(file)
+        packet_DSID, packet_type, text, allDSIDs = decode_header(file)
         self.txt.insert(END, text)
         self.setcurrentbuf(text)
         print "click!"
 
     def testDARpacket(self, file, goodsync, returnoffset):
-        for x in range(0,2):
-            header = file.read(20)  # read the 20 byte header
+        header = file.read(20)  # read the 20 byte header
+        DARtype = struct.unpack('!B', header[1:2])[0]
+        DARsync = struct.unpack('!B', header[0:1])[0]
+        packetlength = struct.unpack('!H', header[2:4])[0]
+        packetlength = packetlength * 4
+        datalength = packetlength - 20
+        DSID = struct.unpack('!I', header[8:12])[0]
+        mcastbyte1 = struct.unpack('!B', header[12:13])[0]
+        if self.get_current_DSID_filter() != None:  # check for no filter case
+            if str(DSID) != self.get_current_DSID_filter():
+                return False, 0xff, 0xff # ff's mean  we do not know what these values should be
+        if DSID > 1000 or mcastbyte1 < 224 or mcastbyte1 > 239: #check to qualify more 'random' data as good, to ensure the random data does not randomly find a good packet
+            return False, 0xff, 0xff # ff's mean we do not know what these values should be
+        file.seek(file.tell()-20)
+        for x in range(0, 4):
+            header = file.read(20)# read the 20 byte header
+            if header == '':
+                file.seek(returnoffset)
+                return True, DSID, DARtype
             DARsync = struct.unpack('!B', header[0:1])[0]  # read 20 byte DAR header into own variables
             packetlength = struct.unpack('!H', header[2:4])[0]
             packetlength = packetlength * 4
             datalength = packetlength - 20
-            #handle end of file case
+            DSID = struct.unpack('!I', header[8:12])[0]
+            mcastbyte1 = struct.unpack('!B', header[12:13])[0]
+            if DSID > 1000 or mcastbyte1 < 224 or mcastbyte1 > 239:  # check to qualify more 'random' data as good, to ensure the random data does not randomly find a good packet
+                return False, 0xff, 0xff # ff's mean we do not know what these values should be
+            # handle end of file case
             if DARsync != 0x35:
                 file.seek(returnoffset)
-                return False
+                return False, 0xff, 0xff # ff's mean we do not know what these values should be
             print file.tell()
             file.seek(file.tell() + datalength)
         file.seek(returnoffset)
-        return True
+        return True, DSID, DARtype
 
     def seekpacketsbackwards(self, file):
-        goback = self.getpreviousoffset() #go back to beginning of packet
-        if goback == 0:
+        chunksize = 1024  # set chunk of data to be read
+        goback = self.getpreviousoffset()  # go back to beginning of packet
+        if goback == 0: # beginning of file case
             return
+        if goback == None:
+            goback = os.fstat(file.fileno()).st_size - chunksize
         file.seek(goback)
         currentoffset = file.tell()
+        startoffset = file.tell()
         goodsync = False
-        file.seek(currentoffset - 2)
-        while True:
-            header = file.read(1)  # read the 20 byte header
-            test = file.tell()
-            DARsync = struct.unpack('!B', header[0:1])[0]
-            if DARsync == 0x35:
-                print 'offset is :' + str(file.tell())
-                returnoffset = file.tell() - 1
-                file.seek(file.tell() - 1)
-                goodsync = self.testDARpacket(file, goodsync, returnoffset)
-                if goodsync == True:
-                    print 'The man'
-                    print 'offset is 2:' + str(file.tell())
-                    self.nextpacket(file)
-                    return
-                else:
-                    file.seek(file.tell() - 2)
-            else:
-                test = file.tell()
-                file.seek(file.tell() - 2)
-                #print 'resync'
+        #list_to_seek = list(range(file.tell(), 0, -chunksize))
+        #print list_to_seek
+        if file.tell() - chunksize <= 0:
+            file.seek(0)
+        else:
+            file.seek(file.tell()-chunksize)
+        for pos in range(file.tell(), 0, -chunksize):
+            file.seek(pos)
+            whatsgoingon = file.tell()
+            chunk = binascii.hexlify(file.read(chunksize))
+            start_point_for_offset = file.tell()
+            found = [m.start() for m in re.finditer('35', chunk)]  # regular expression search hex string chunk for 35 string and return list of indexes of all occurences
+            found.sort(reverse=True)
+            for index in found:  # loop over all indexes to check if it is the start of a packet
+                if index % 2 == 0:  # if the index is not an even number, it is not a real instance. The string search is nibble by nibble, but in DAR, the lowest unit is a byte
+                    checkoffset = start_point_for_offset - (len(chunk) / 2) + (index / 2)   # make file offset of exact instance, remembering to divide the index by 2, since it is addressed in nibbles, not bytes
+                    file.seek(checkoffset)  # go to exact offset of area to check
+                    goodsync, DSID, DARtype = self.testDARpacket(file, goodsync, checkoffset)  # call a test to check if the DAR packet is real
+                    if goodsync == True and (DARtype != 0xf1 or file.tell() == 0):
+                        print file.tell()
+                        print checkoffset
+                        self.nextpacket(file)
+                        return
+                    else:
+                        if DARtype == 0xf1 or file.tell() == 0:
+                            file.seek(0)
+                            self.nextpacket(file)
+                            return
+                        file.seek(start_point_for_offset)
 
-    def seekpacketforward(self,file):
-        #need EOF test here
+    def seekpacketforward(self, file):
+        # need EOF test here
         currentoffset = file.tell()
         goodsync = False
-        file.seek(currentoffset)
+        chunksize = 1024000 #set chunk of data to be read
         while True:
-            header = file.read(1)  # read the 20 byte header
-            test = file.tell()
-            DARsync = struct.unpack('!B', header[0:1])[0]
-            if DARsync == 0x35:
-                print 'offset is :' + str(file.tell())
-                returnoffset = file.tell() - 1
-                file.seek(file.tell() - 1)
-                goodsync = self.testDARpacket(file, goodsync, returnoffset)
-                if goodsync == True:
-                    print 'The man'
-                    print 'offset is 2:' + str(file.tell())
-                    self.nextpacket(file)
-                    return
-                else:
-                    file.seek(file.tell()+1)
+        #while range(0,1):
+            chunk = file.read(chunksize) # read chunk of data
+            currentoffset = file.tell() #update current file offset
+            if chunk == '': #check for EOF, abort function if found
+                return
+            chunk = binascii.b2a_hex(chunk) #bring binary string over to hex string to be processed
+            #print chunk #debugging print
+            #for m in re.finditer('35', chunk):
+                #m += 1
+            found = [m.start() for m in re.finditer('35', chunk)]   #regular expression search hex string chunk for 35 string and return list of indexes of all occurences
+            for index in found: #loop over all indexes to check if it is the start of a packet
+                if index % 2 == 0:  #if the index is not an even number, it is not a real instance. The string search is nibble by nibble, but in DAR, the lowest unit is a byte
+                    checkoffset = file.tell() - (len(chunk)/2) + (index/2)   #make file offset of exact instance, remembering to divide the index by 2, since it is addressed in nibbles, not bytes
+                    file.seek(checkoffset)  #go to exact offset of area to check
+                    goodsync, DSID, DARtype = self.testDARpacket(file, goodsync, checkoffset) #call a test to check if the DAR packet is real
+                    if goodsync == True and (DARtype != 0xf1 or file.tell() == 0):
+                        print 'YOU ARE THE MAN!!!'
+                        print file.tell()
+                        print checkoffset
+                        self.nextpacket(file)
+                        return
+                    else:
+                        file.seek(currentoffset)
+            file.seek(currentoffset)
+            #print found
 
     def onOpen(self):
         ftypes = [('DARv3', '*.dr3'), ('All files', '*')]
@@ -209,31 +319,40 @@ class window(Frame):
 
     def readFile(self, filename):
         file = open(filename, 'rb')  # open file to view packets
-        # packetnum=1 #initalize variables
-        #self.setpreviousoffset( file.tell())
-        rawheader, packet_type, buf = decode_header(file)
+        current_DSID, packet_type, buf, allDSIDs = decode_header(file)
+        picks = Menu(self.dropdown, tearoff=False)
+        self.dropdown.config(menu=picks, state=NORMAL)
+        self.set_current_DSID_filter(None)
+        picks.add_command(label='All', command=lambda: self.set_current_DSID_filter(None))
+        for DSID in allDSIDs:
+            picks.add_command(label=DSID, command=lambda DSID=DSID:self.set_current_DSID_filter(DSID))
+            print self.get_current_DSID_filter()
         self.setcurrentbuf(buf)
         self.button.config(state=NORMAL, command=lambda: self.nextpacket(file))
         self.button2.config(state=NORMAL, command=lambda: self.seekpacketsbackwards(file))
         vcmd = (self.register(self.onvalidate),
                 '%d', '%i', '%P')
         self.entry.config(state=NORMAL, validate="key", validatecommand=vcmd)
-        #self.entry.bind('<KeyPress>', self.keyPress)
+        # self.entry.bind('<KeyPress>', self.keyPress)
         self.offset.config(state=NORMAL, command=lambda: self.goto_offset(file))
         self.export.config(state=NORMAL, command=lambda: self.exportcurrentpacket())
+        self.slider.config(state=NORMAL)
+        for multi_buttons in ['<ButtonRelease-1>','<ButtonRelease-2>','<ButtonRelease-3>']:
+            self.slider.bind(multi_buttons, lambda _: self.slider_position_goto(file))
         return buf, file
-        # draw_screen(rawheader)
 
     def onvalidate(self, d, i, P):
-        hexchars= ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'a', 'b', 'c', 'd', 'e', 'f')
-        if d == '0':   #no need to validate on delete events
+        hexchars = (
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'a', 'b', 'c', 'd', 'e', 'f')
+        if d == '0':  # no need to validate on delete events
             return True
-        if d == '1':   # validate on insertion events
-            if P[int(i)] in hexchars:   #look at new string P with the new character I and check if it is in hexchars
+        if d == '1':  # validate on insertion events
+            if P[int(i)] in hexchars:  # look at new string P with the new character I and check if it is in hexchars
                 return True
             else:
                 self.bell()
                 return False
+
 
 def decode_header(file):  # determines what data is in the following packet
     currentpacketoffset = file.tell()
@@ -291,6 +410,7 @@ def decode_header(file):  # determines what data is in the following packet
     packet_type = what_packet_is_it(DARtype)
     header_string = form_header(total_header_data)
     buf = ''
+    allDSIDs = []
     if packet_type.name == 'PCM' or packet_type.name == 'MNPCM':  # check for packet types
         total_segment_data = decode_PCM_packet(file, datalength)  # get all segment headers and data in dict form
         # print packetnum
@@ -298,7 +418,7 @@ def decode_header(file):  # determines what data is in the following packet
         buf = formPCMdisplay(header_string, total_segment_data, secondstime, formattedseconds,
                              file)  # pass header_string and segment data to this function, to form the PCM display
     elif packet_type.name == 'XML':
-        buf = decode_XML_packet(file, datalength)
+        buf, allDSIDs = decode_XML_packet(file, datalength)
     elif packet_type.name == 'A429':
         total_segment_data = decode_429_packet(file, datalength)
         buf = formA429display(header_string, secondstime, formattedseconds, total_segment_data, file)
@@ -309,7 +429,7 @@ def decode_header(file):  # determines what data is in the following packet
         buf = unknown(file, header_string, total_header_data)
     rawheader = ''.join(x.encode('hex') for x in header)  # packet header printout for debugging purposes
     print rawheader
-    return rawheader, packet_type, buf
+    return DSID, packet_type, buf, allDSIDs
 
 
 def form_header(total_header_data):
@@ -387,8 +507,9 @@ def formPCMdisplay(header_string, total_segment_data, secondstime, formattedseco
 
 
 def unknown(file, header_string, total_header_data):
-    message = header_string +'\n\n' + str(hex(total_header_data.get('DARtype'))) + ' packet type is not supported yet. Please contact TTC to inquire about it being added'
-    file.seek(file.tell()+total_header_data.get('datalength')) #skip over unknown data, seek to the next packet
+    message = header_string + '\n\n' + str(hex(total_header_data.get(
+        'DARtype'))) + ' packet type is not supported yet. Please contact TTC to inquire about it being added'
+    file.seek(file.tell() + total_header_data.get('datalength'))  # skip over unknown data, seek to the next packet
     return message
 
 
@@ -399,13 +520,14 @@ def what_packet_is_it(DARtype):
         packet_type = packettype(1)
     elif DARtype == 0xa1:  # PCM traffic from nDAU or MnACQ
         packet_type = packettype(2)
-    elif DARtype == 0x38: # A429 traffic from mn429
+    elif DARtype == 0x38:  # A429 traffic from mn429
         packet_type = packettype(4)
-    elif DARtype == 0xD0:   # 1553 traffic from MnHSD
+    elif DARtype == 0xD0:  # 1553 traffic from MnHSD
         packet_type = packettype(17)
     else:  # Unknown traffic
         packet_type = packettype(23)
     return packet_type
+
 
 def formA429display(header_string, secondstime, formattedseconds, total_segment_data, file):
     displaydata = []
@@ -457,6 +579,7 @@ def formA429display(header_string, secondstime, formattedseconds, total_segment_
         segmentcount = segmentcount - 1
     return blah
 
+
 def decode_429_packet(file, datalength):
     segment_count = 0
     total_list_segment_data = []
@@ -501,11 +624,14 @@ def decode_429_packet(file, datalength):
         # draw_screen(rawPCMdata)
         print datalength
         segment_data = {'segment_count': segment_count, 'nanosecondstime': nanosecondstime, 'seglength': seglength,
-                        'Overflow_flag' : overflow_flag,'simulation_flag': simulation_flag, 'A429' : A429, 'Label' : Label, 'SDI' :SDI, 'Data' : Data , 'SSM' : SSM, 'Parity' : Parity, 'rawPCMdata': rawPCMdata}
+                        'Overflow_flag': overflow_flag, 'simulation_flag': simulation_flag, 'A429': A429,
+                        'Label': Label, 'SDI': SDI, 'Data': Data, 'SSM': SSM, 'Parity': Parity,
+                        'rawPCMdata': rawPCMdata}
         total_list_segment_data.append(segment_data)
         print total_list_segment_data
         segment_count = segment_count + 1
     return total_list_segment_data
+
 
 def decode_1553_packet(file, datalength):
     segment_count = 0
@@ -523,11 +649,11 @@ def decode_1553_packet(file, datalength):
         print seglength
         print errorcode
         print flags
-        general_error = errorcode & 0x08 >> 3 # make error code bits
+        general_error = errorcode & 0x08 >> 3  # make error code bits
         packet_underflow = errorcode & 0x04 >> 2
         FIFO_underflow = errorcode & 0x02 >> 1
         FIFO_overflow = errorcode & 0x01
-        if general_error== 0:   #set error code bits to yes or no text
+        if general_error == 0:  # set error code bits to yes or no text
             general_error = 'No'
         else:
             general_error = 'Yes'
@@ -539,13 +665,13 @@ def decode_1553_packet(file, datalength):
             FIFO_underflow = 'No'
         else:
             FIFO_underflow = 'Yes'
-        if FIFO_overflow== 0:
+        if FIFO_overflow == 0:
             FIFO_overflow = 'No'
         else:
             FIFO_overflow = 'Yes'
-        fragmentation_flags = flags & 0x06 >> 1 #decode flag bits
+        fragmentation_flags = flags & 0x06 >> 1  # decode flag bits
         simulation_flag = flags & 0x01
-        if fragmentation_flags == 0:    #set flags to appropriate text decoding
+        if fragmentation_flags == 0:  # set flags to appropriate text decoding
             fragmentation_flags = 'Complt'
         elif fragmentation_flags == 1:
             fragmentation_flags = 'First'
@@ -558,7 +684,7 @@ def decode_1553_packet(file, datalength):
         else:
             simulation_flag = 'Yes'
         print fragmentation_flags, simulation_flag
-        message_class = blockstatus & 0xC000 >> 14  #decode block status word
+        message_class = blockstatus & 0xC000 >> 14  # decode block status word
         bus_id = blockstatus & 0x2000 >> 13
         message_error = blockstatus & 0x1000 >> 12
         rt_to_rt = blockstatus & 0x0800 >> 11
@@ -568,7 +694,7 @@ def decode_1553_packet(file, datalength):
         sync_type_error = blockstatus & 0x0010 >> 4
         invalid_word_error = blockstatus & 0x0008 >> 3
         simulator_enable = blockstatus & 0x0001
-        if message_class == 0:    #set block status to appropriate text decoding
+        if message_class == 0:  # set block status to appropriate text decoding
             message_class = 'Norml'
         elif message_class == 1:
             message_class = 'Unclass'
@@ -612,7 +738,7 @@ def decode_1553_packet(file, datalength):
             simulator_enable = 'No'
         else:
             simulator_enable = 'Yes'
-        gaptime1 *= 0.1 #put gaptime words in units of microseconds
+        gaptime1 *= 0.1  # put gaptime words in units of microseconds
         gaptime2 *= 0.1
         datalength = datalength - seglength
         raw_1553_data = file.read(seglength - 12)
@@ -629,9 +755,13 @@ def decode_1553_packet(file, datalength):
         # draw_screen(rawPCMdata)
         print datalength
         segment_data = {'segment_count': segment_count, 'nanosecondstime': nanosecondstime, 'seglength': seglength,
-                        'Gen error': general_error,  'Pkt Udrflw': packet_underflow,
-                        'FIFO Ovrflw': FIFO_overflow, 'FIFO Udrflw': FIFO_underflow, 'simulation_flag': simulation_flag, 'Msg Class': message_class, 'Bus ID': bus_id, 'Msg Error': message_error,
-                        'RT_to_RT': rt_to_rt, 'Fmt error': format_error, 'Rsp timeout': timeout, 'Word Cnt Error' : word_count_error, 'Sync error': sync_type_error, 'Invld word error': invalid_word_error, 'Sim enabled' : simulator_enable, 'Gaptime 1' : gaptime1, 'Gaptime 2' :gaptime2, 'Raw_1553' : raw_1553_data }
+                        'Gen error': general_error, 'Pkt Udrflw': packet_underflow,
+                        'FIFO Ovrflw': FIFO_overflow, 'FIFO Udrflw': FIFO_underflow, 'simulation_flag': simulation_flag,
+                        'Msg Class': message_class, 'Bus ID': bus_id, 'Msg Error': message_error,
+                        'RT_to_RT': rt_to_rt, 'Fmt error': format_error, 'Rsp timeout': timeout,
+                        'Word Cnt Error': word_count_error, 'Sync error': sync_type_error,
+                        'Invld word error': invalid_word_error, 'Sim enabled': simulator_enable, 'Gaptime 1': gaptime1,
+                        'Gaptime 2': gaptime2, 'Raw_1553': raw_1553_data}
         total_list_segment_data.append(segment_data)
         print total_list_segment_data
         segment_count += 1
@@ -650,7 +780,7 @@ def decode_XML_packet(file, datalength):
     totaldata = datalength
     x = 0
     while datalength >= 32740:
-        #file.seek(file.tell()+1)
+        # file.seek(file.tell()+1)
         hey = file.tell()
         if x == 0:
             string = file.read(datalength)
@@ -659,29 +789,37 @@ def decode_XML_packet(file, datalength):
             header = file.read(20)  # read the 20 byte header
             DARsync = struct.unpack('!B', header[0:1])[0]  # read 20 byte DAR header into own variables
             DARtype = struct.unpack('!B', header[1:2])[0]
+            if DARtype != 0xf1: #handles case when exactly 32768 bytes of XML packet
+                file.seek(file.tell()-20)
+                datalength = 0
+                break
             packetlength = struct.unpack('!H', header[2:4])[0]
             packetlength = packetlength * 4
             datalength = packetlength - 20
             trash = file.read(8)
             datalength = datalength - 8
             string = file.read(datalength)
-            totaldata= totaldata + string
-        x = x + 1
-    #tarball = file.read(totaldata)
-    #testtarball = ''.join(x.encode('hex') for x in tarball)
+            totaldata = totaldata + string
+        x += 1
+        print 'XML position: ' + str(file.tell())
+    # tarball = file.read(totaldata)
+    # testtarball = ''.join(x.encode('hex') for x in tarball)
     archive.write(totaldata)
     tar = tarfile.open('DARXMLTemp.tar.gz')
     hit = tar.getnames()
     tar.extract(hit[0])
     f = open(hit[0], 'r')
     buf = f.read()
-    root = ET.fromstring(buf)
-    blah = root.findall('DSID')
-    print blah
-    #print buf
-    #draw_screen_XML(buf)
-    # print testtarball
-    return buf
+    doc = etree.fromstring(buf)
+    DSID = doc.xpath("//@DSID")  # find all DSID attributes and put in a list
+    elementDSID = doc.xpath('//DSID/text()')  # find all DSID elements and put in a list
+    camID = doc.xpath('//@CameraID')  # find all CameraID elements and put in a list
+    allDSIDs = DSID + elementDSID + camID
+    allDSIDs = list(set(allDSIDs))
+    allDSIDs.sort(key=int)
+    print allDSIDs
+    print 'XML position: ' + str(file.tell())
+    return buf, allDSIDs
 
 
 def decode_PCM_packet(file, datalength):
@@ -753,9 +891,6 @@ def decode_PCM_packet(file, datalength):
             pad = file.read(padbytes)
             datalength = datalength - padbytes  # properly adjust data length
         rawPCMdata = ''.join(x.encode('hex') for x in PCM_data)
-        # print rawPCMdata
-        # test =
-        # draw_screen(rawPCMdata)
         print datalength
         segment_data = {'segment_count': segment_count, 'nanosecondstime': nanosecondstime, 'seglength': seglength,
                         'FPGA_sync_error': FPGA_sync_error, 'block_len_error': block_len_error,
@@ -771,7 +906,9 @@ def decode_PCM_packet(file, datalength):
 def main():
     root = Tk()
     ex = window(root)
+    root.geometry('1024x600')
     root.mainloop()
+
 
 if __name__ == '__main__':
     main()

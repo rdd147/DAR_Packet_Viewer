@@ -29,7 +29,7 @@ class packettype(Enum):
     Audio = 14
     A664 = 15
     HFCI = 16
-    MIL1553 = 17    #mid implementation
+    MIL1553 = 17    #implemented
     CAN = 18
     ENETUDP = 19
     ENETTCP = 20
@@ -761,7 +761,7 @@ def decode_1553_packet(file, datalength):
                         'RT_to_RT': rt_to_rt, 'Fmt error': format_error, 'Rsp timeout': timeout,
                         'Word Cnt Error': word_count_error, 'Sync error': sync_type_error,
                         'Invld word error': invalid_word_error, 'Sim enabled': simulator_enable, 'Gaptime 1': gaptime1,
-                        'Gaptime 2': gaptime2, 'Raw_1553': raw_1553_data}
+                        'Gaptime 2': gaptime2, 'Raw_1553': data_1553}
         total_list_segment_data.append(segment_data)
         print total_list_segment_data
         segment_count += 1
@@ -769,7 +769,89 @@ def decode_1553_packet(file, datalength):
 
 
 def form1553display(header_string, secondstime, formattedseconds, total_segment_data, file):
-    return 'This is still being coded'
+    displaydata = []
+    howmanysegments = len(total_segment_data)  # figure out how many segments are in the current DAR PCM packet
+    print howmanysegments
+    # print total_segment_data
+    displaydata.append('\n')
+    displaydata.append('{:<30}'.format('Total Segments in Packet  :  ') + str(howmanysegments))
+    segmentcount = howmanysegments  # initialize loop variable for writing multiple segments
+    blah = header_string
+    while segmentcount > 0:
+        index = howmanysegments - segmentcount
+        displaydata.append('')
+        displaydata.append(
+            '{:<24}'.format('Seg Number  :  ' + str(total_segment_data[index]['segment_count'])) + '{:<24}'.format(
+                'Seg Length :  ' + str(total_segment_data[index]['seglength'])) + '{:<24}'.format(
+                'Data Length :  ' + str(total_segment_data[index]['seglength'] - 12)))
+        displaydata.append('{:<24}'.format(
+            'FIFO Ovrflw :  ' + str(total_segment_data[index]['FIFO Ovrflw'])) + '{:<24}'.format(
+            'FIFO Urflw :  ' + str(total_segment_data[index]['FIFO Udrflw'])) + '{:<24}'.format(
+            'Pkt Udrflw  :  ' + str(total_segment_data[index]['Pkt Udrflw'])))
+        displaydata.append('{:<24}'.format('Simulatior  :  ' + str(total_segment_data[index]['simulation_flag'])))
+        displaydata.append('')
+        displaydata.append('{:<24}'.format('Bus ID      :  ' + str(total_segment_data[index]['Bus ID'])) + '{:<24}'.format(
+                'RT to RT   :  ' + str(total_segment_data[index]['RT_to_RT'])) + '{:<24}'.format(
+                'Msg Class   :  ' + str(total_segment_data[index]['Msg Class'])))
+        displaydata.append(
+            '{:<24}'.format('Gen Error   :  ' + str(total_segment_data[index]['Gen error'])) + '{:<24}'.format(
+                'Msg Error  :  ' + str(total_segment_data[index]['Msg Error'])) + '{:<24}'.format(
+                'Fmt Error   :  ' + str(total_segment_data[index]['Fmt error'])))
+        displaydata.append(
+            '{:<24}'.format('Wrd Cnt Err :  ' + str(total_segment_data[index]['Word Cnt Error'])) + '{:<24}'.format(
+                'Sync error :  ' + str(total_segment_data[index]['Sync error'])) + '{:<24}'.format(
+                'Ivd wrd err :  ' + str(total_segment_data[index]['Invld word error'])))
+        displaydata.append(
+            '{:<24}'.format('Rsp timeout :  ' + str(total_segment_data[index]['Rsp timeout'])) + '{:<24}'.format(
+                'Gaptime 1  :  ' + str(total_segment_data[index]['Gaptime 1'])) + '{:<24}'.format(
+                'Gaptime 2   :  ' + str(total_segment_data[index]['Gaptime 2'])))
+        displaydata.append('')
+        displaydata.append('{:<40}'.format(('Timestamp        :  ') + str(secondstime) + '.' + str(
+            total_segment_data[index]['nanosecondstime']) + ' seconds'))
+        displaydata.append('{:<40}'.format(('Date Timestamp   :  ') + str(formattedseconds) + '.' + str(
+            total_segment_data[index]['nanosecondstime']) + ' seconds'))
+        displaydata.append('')
+        seg_offset = 0
+        yo = []
+        seg = total_segment_data[index]['Raw_1553']
+        for i in range(0, len(total_segment_data[index]['Raw_1553']), 4):
+            if i % 32 == 0:
+                yo.append('\n' + str(hex(seg_offset)[2:]).zfill(8) + ' ')
+                seg_offset = seg_offset + 0x10
+            yo.append(seg[i:i + 4])
+            # print yo
+        blah = blah + '\n'.join(displaydata) + ' '.join(
+            yo) + '\n'  # insert new lines in between all of the lines and make one large packet string to draw later
+        yo = []
+        displaydata = []
+        # displaydata.append('{:<10}'.format(hex(seg_offset)[2:].zfill(8)) + total_segment_data[index]['rawPCMdata'][i-1)
+        segmentcount = segmentcount - 1
+    return blah
+    '''displaydata.append(
+        '{:<24}'.format('Label       :  ' + str(total_segment_data[index]['Label'])) + '{:<24}'.format(
+            'SDI        :  ' + str(total_segment_data[index]['SDI'])) + '{:<24}'.format(
+            'Data        :  ' + str(total_segment_data[index]['Data'])))
+    displaydata.append(
+        '{:<24}'.format('SSM         :  ' + str(total_segment_data[index]['SSM'])) + '{:<24}'.format(
+            'Parity     :  ' + str(total_segment_data[index]['Parity'])[0]))
+    displaydata.append('')
+    seg_offset = 0
+    yo = []
+    seg = total_segment_data[index]['rawPCMdata']
+    for i in range(0, len(total_segment_data[index]['rawPCMdata']), 4):
+        if i % 32 == 0:
+            yo.append('\n' + str(hex(seg_offset)[2:]).zfill(8) + ' ')
+            seg_offset = seg_offset + 0x10
+        yo.append(seg[i:i + 4])
+        # print yo
+    blah = blah + '\n'.join(displaydata) + ' '.join(
+        yo) + '\n'  # insert new lines in between all of the lines and make one large packet string to draw later
+    yo = []
+    displaydata = []
+    # displaydata.append('{:<10}'.format(hex(seg_offset)[2:].zfill(8)) + total_segment_data[index]['rawPCMdata'][i-1)
+    segmentcount = segmentcount - 1
+return blah
+return 'This is still being coded'''
 
 
 def decode_XML_packet(file, datalength):

@@ -48,6 +48,7 @@ class window(Frame):
 
     def initalize(self):
         self.parent.title("DARv3 Packet Viewer")
+        #self.parent.iconbitmap(default='iconLogo100.ico')
         # self.grid(row=0, column=0, columnspan=30)
         self.pack(fill=BOTH, expand=1)
         menubar = Menu(self.parent)
@@ -827,31 +828,7 @@ def form1553display(header_string, secondstime, formattedseconds, total_segment_
         # displaydata.append('{:<10}'.format(hex(seg_offset)[2:].zfill(8)) + total_segment_data[index]['rawPCMdata'][i-1)
         segmentcount = segmentcount - 1
     return blah
-    '''displaydata.append(
-        '{:<24}'.format('Label       :  ' + str(total_segment_data[index]['Label'])) + '{:<24}'.format(
-            'SDI        :  ' + str(total_segment_data[index]['SDI'])) + '{:<24}'.format(
-            'Data        :  ' + str(total_segment_data[index]['Data'])))
-    displaydata.append(
-        '{:<24}'.format('SSM         :  ' + str(total_segment_data[index]['SSM'])) + '{:<24}'.format(
-            'Parity     :  ' + str(total_segment_data[index]['Parity'])[0]))
-    displaydata.append('')
-    seg_offset = 0
-    yo = []
-    seg = total_segment_data[index]['rawPCMdata']
-    for i in range(0, len(total_segment_data[index]['rawPCMdata']), 4):
-        if i % 32 == 0:
-            yo.append('\n' + str(hex(seg_offset)[2:]).zfill(8) + ' ')
-            seg_offset = seg_offset + 0x10
-        yo.append(seg[i:i + 4])
-        # print yo
-    blah = blah + '\n'.join(displaydata) + ' '.join(
-        yo) + '\n'  # insert new lines in between all of the lines and make one large packet string to draw later
-    yo = []
-    displaydata = []
-    # displaydata.append('{:<10}'.format(hex(seg_offset)[2:].zfill(8)) + total_segment_data[index]['rawPCMdata'][i-1)
-    segmentcount = segmentcount - 1
-return blah
-return 'This is still being coded'''
+
 
 
 def decode_XML_packet(file, datalength):
